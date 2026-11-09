@@ -26,7 +26,7 @@ locals {
       puerto       = 3000
       desired      = var.backend_desired_count
       target_group = aws_lb_target_group.backend.arn
-      environment  = [
+      environment = [
         { name = "PORT", value = "3000" },
       ]
     }
@@ -52,14 +52,14 @@ resource "aws_ecs_task_definition" "app" {
   }
 
   container_definitions = jsonencode([{
-    name             = each.key
-    image            = "${aws_ecr_repository.app[each.key].repository_url}:${var.image_tag}"
-    essential        = true
-    portMappings     = [{ containerPort = each.value.puerto, protocol = "tcp" }]
-    environment      = each.value.environment
+    name         = each.key
+    image        = "${aws_ecr_repository.app[each.key].repository_url}:${var.image_tag}"
+    essential    = true
+    portMappings = [{ containerPort = each.value.puerto, protocol = "tcp" }]
+    environment  = each.value.environment
     logConfiguration = {
       logDriver = "awslogs"
-      options   = {
+      options = {
         awslogs-group         = aws_cloudwatch_log_group.app[each.key].name
         awslogs-region        = var.aws_region
         awslogs-stream-prefix = each.key
