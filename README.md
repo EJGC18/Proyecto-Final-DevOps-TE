@@ -180,7 +180,7 @@ versión del commit en *Frontend* y *Backend*, y el nombre de la tarea ECS que r
 
 | Síntoma | Causa / solución |
 |---|---|
-| `Not authorized to perform sts:AssumeRoleWithWebIdentity` | El repo no coincide con el del script → ejecútalo otra vez con `<usuario>/<repo>` exacto |
+| `Not authorized to perform sts:AssumeRoleWithWebIdentity` | El `sub` del token no coincide con la confianza del rol. Revisa en CloudTrail (`lookup-events` de `AssumeRoleWithWebIdentity` → `userIdentity.userName`) el formato exacto que envía GitHub y vuelve a ejecutar el script con `<usuario>/<repo>` exacto |
 | `Credentials could not be loaded` | Falta `id-token: write` o la variable `AWS_ROLE_ARN` |
 | `AccessDenied` en IAM al hacer apply | Cambiaste `PROJECT_NAME`: los roles deben empezar con ese prefijo → vuelve a ejecutar el script con el proyecto nuevo (3er argumento) |
 | `Falta la variable TF_STATE_BUCKET` | Crea la variable del paso 3 |

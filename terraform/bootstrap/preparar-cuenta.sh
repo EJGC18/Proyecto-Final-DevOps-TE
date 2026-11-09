@@ -58,7 +58,13 @@ else
 fi
 
 # ---------- 3. Rol para GitHub Actions ----------
-# Confianza: solo tokens emitidos por GitHub para ESTE repositorio
+# Confianza: solo tokens emitidos por GitHub para ESTE repositorio.
+# GitHub puede enviar el "sub" en dos formatos:
+#   repo:usuario/repo:ref:...                     (clásico)
+#   repo:usuario@<id>/repo@<id>:ref:...           (con IDs inmutables)
+# "@" no es válido en nombres de GitHub, así que el comodín no abre la puerta a otros repos.
+OWNER="${REPO%%/*}"
+NAME="${REPO##*/}"
 cat > /tmp/trust.json <<EOF
 {
   "Version": "2012-10-17",
@@ -68,7 +74,7 @@ cat > /tmp/trust.json <<EOF
     "Action": "sts:AssumeRoleWithWebIdentity",
     "Condition": {
       "StringEquals": { "${OIDC_URL}:aud": "sts.amazonaws.com" },
-      "StringLike":   { "${OIDC_URL}:sub": "repo:${REPO}:*" }
+      "StringLike":   { "${OIDC_URL}:sub": ["repo:${REPO}:*", "repo:${OWNER}@*/${NAME}@*:*"] }
     }
   }]
 }
