@@ -1,0 +1,6 @@
+# Copia a backend.hcl y usa:  terraform init -backend-config=backend.hcl
+bucket       = "tfstate-tareas-devops-123456789012" # el que creó bootstrap/preparar-cuenta.sh
+key          = "proyecto-final/terraform.tfstate"
+region       = "us-east-1"
+use_lockfile = true
+encrypt      = true

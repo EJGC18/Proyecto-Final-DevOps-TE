@@ -1,0 +1,84 @@
+# PIPELINE 2 — Construcción y publicación en Amazon ECR
+#  1. Obtiene el código y ejecuta pruebas (backend) y verificación (frontend)
+#  2. Construye las imágenes Docker de frontend y backend
+#  3. Las etiqueta con el SHA corto del commit (+ latest) y las publica en ECR
+# Al terminar con éxito dispara automáticamente el Pipeline 3.
+name: 2 - Build y publicación en ECR
+
+on:
+  push:
+    branches: [main]
+    paths: ["aplicacion/**", "pipelines/scripts/build-push.sh", ".github/workflows/2-build-publicacion.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # necesario para que GitHub emita el token OIDC
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  PROJECT: ${{ vars.PROJECT_NAME || 'tareas-devops' }}
+
+jobs:
+  pruebas:
+    name: Pruebas
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: aplicacion/backend/package-lock.json
+
+      - name: Backend - instalar dependencias
+        working-directory: aplicacion/backend
+        run: npm ci
+
+      - name: Backend - pruebas unitarias
+        working-directory: aplicacion/backend
+        run: npm test
+
+      - name: Frontend - verificar sintaxis JavaScript
+        working-directory: aplicacion/frontend/public
+        run: for f in *.js; do node --check "$f" && echo "OK $f"; done
+
+  build-push:
+    name: Build y push (${{ matrix.componente }})
+    needs: pruebas
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        componente: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verificar configuración de GitHub
+        run: |
+          if [ -z "${{ vars.AWS_ROLE_ARN }}" ]; then
+            echo "::error::Falta la variable AWS_ROLE_ARN (ejecuta terraform/bootstrap/preparar-cuenta.sh, ver README paso 2)."
+            exit 1
+          fi
+
+      - name: Credenciales AWS temporales (OIDC, sin claves guardadas)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          role-session-name: gha-${{ github.run_id }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login en Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Construir, etiquetar y publicar
+        id: push
+        run: |
+          TAG="${GITHUB_SHA::7}"
+          bash pipelines/scripts/build-push.sh "${{ matrix.componente }}" "$TAG"
+          echo "### ${{ matrix.componente }}: \`$TAG\` publicado en ECR" >> "$GITHUB_STEP_SUMMARY"

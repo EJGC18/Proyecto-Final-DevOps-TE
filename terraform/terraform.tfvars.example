@@ -1,0 +1,7 @@
+# Copia este archivo a terraform.tfvars para ejecución local (terraform.tfvars está en .gitignore).
+aws_region  = "us-east-1"
+project     = "tareas-devops"
+environment = "prod"
+
+frontend_desired_count = 2
+backend_desired_count  = 1

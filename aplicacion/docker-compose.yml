@@ -1,0 +1,23 @@
+# Prueba local:  docker compose up --build   ->  http://localhost:8080
+services:
+  backend:
+    build:
+      context: ./backend
+      args:
+        APP_VERSION: local
+    environment:
+      CORS_ORIGIN: http://localhost:8080
+    ports:
+      - "3000:3000"
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        APP_VERSION: local
+    ports:
+      - "8080:80"
+    volumes:
+      - ./frontend/config.local.js:/usr/share/nginx/html/config.js:ro
+    depends_on:
+      - backend

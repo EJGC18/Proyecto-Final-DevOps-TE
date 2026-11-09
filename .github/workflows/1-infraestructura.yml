@@ -1,0 +1,119 @@
+# PIPELINE 1 — Infraestructura como código (Terraform)
+#  - Pull request que toca terraform/  -> fmt + validate + plan (sin cambios en AWS)
+#  - Push a main que toca terraform/   -> plan + apply
+#  - Manual (workflow_dispatch)        -> plan | apply | destroy (destroy exige confirmación)
+name: 1 - Infraestructura (Terraform)
+
+on:
+  push:
+    branches: [main]
+    paths: ["terraform/**", ".github/workflows/1-infraestructura.yml"]
+  pull_request:
+    paths: ["terraform/**"]
+  workflow_dispatch:
+    inputs:
+      accion:
+        description: "Acción de Terraform"
+        type: choice
+        options: [plan, apply, destroy]
+        default: plan
+      confirmar_destroy:
+        description: "Para destroy escribe DESTRUIR"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  id-token: write # necesario para que GitHub emita el token OIDC
+
+# Nunca dos ejecuciones de Terraform a la vez sobre el mismo estado
+concurrency:
+  group: terraform-estado
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  TF_VAR_aws_region: ${{ vars.AWS_REGION || 'us-east-1' }}
+  TF_VAR_project: ${{ vars.PROJECT_NAME || 'tareas-devops' }}
+  TF_IN_AUTOMATION: "true"
+
+jobs:
+  terraform:
+    name: Terraform ${{ inputs.accion || (github.event_name == 'push' && 'apply' || 'plan') }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform
+    env:
+      ACCION: ${{ inputs.accion || (github.event_name == 'push' && 'apply' || 'plan') }}
+
+    steps:
+      - name: Obtener código
+        uses: actions/checkout@v4
+
+      - name: Validar confirmación de destroy
+        if: env.ACCION == 'destroy' && inputs.confirmar_destroy != 'DESTRUIR'
+        run: |
+          echo "::error::Para destruir la infraestructura escribe DESTRUIR en 'confirmar_destroy'."
+          exit 1
+
+      - name: Verificar configuración de GitHub
+        run: |
+          if [ -z "${{ vars.AWS_ROLE_ARN }}" ]; then
+            echo "::error::Falta la variable AWS_ROLE_ARN (ejecuta terraform/bootstrap/preparar-cuenta.sh, ver README paso 2)."
+            exit 1
+          fi
+
+      - name: Credenciales AWS temporales (OIDC, sin claves guardadas)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          role-session-name: gha-${{ github.run_id }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Instalar Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.10.5"
+
+      - name: terraform fmt
+        run: terraform fmt -check -recursive -diff
+
+      - name: terraform init (estado remoto en S3)
+        run: |
+          if [ -z "${{ vars.TF_STATE_BUCKET }}" ]; then
+            echo "::error::Falta la variable de repositorio TF_STATE_BUCKET (ver README, paso 2)."
+            exit 1
+          fi
+          terraform init -input=false \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="key=proyecto-final/terraform.tfstate" \
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="use_lockfile=true" \
+            -backend-config="encrypt=true"
+
+      - name: terraform validate
+        run: terraform validate
+
+      - name: terraform plan
+        if: env.ACCION != 'destroy'
+        run: terraform plan -input=false -out=tfplan
+
+      - name: terraform apply
+        if: env.ACCION == 'apply'
+        run: terraform apply -input=false -auto-approve tfplan
+
+      - name: terraform destroy
+        if: env.ACCION == 'destroy'
+        run: terraform destroy -input=false -auto-approve
+
+      - name: Resumen de infraestructura creada
+        if: env.ACCION == 'apply'
+        run: |
+          {
+            echo "## Infraestructura aprovisionada"
+            echo '```'
+            terraform output
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          terraform output

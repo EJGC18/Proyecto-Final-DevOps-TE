@@ -1,0 +1,115 @@
+# PIPELINE 3 — Despliegue en Amazon ECS
+#  - Automático: cuando el Pipeline 2 termina con éxito en main
+#  - Manual: permite desplegar (o volver a) cualquier tag existente en ECR
+# Pasos: verificar imágenes en ECR -> nueva task definition -> update-service ->
+#        esperar estabilidad -> smoke test vía ALB -> rollback si algo falla.
+name: 3 - Despliegue en ECS
+
+on:
+  workflow_run:
+    workflows: ["2 - Build y publicación en ECR"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Tag a desplegar (SHA corto de 7 caracteres). Vacío = commit actual"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  id-token: write # necesario para que GitHub emita el token OIDC
+
+concurrency:
+  group: deploy-produccion
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  PROJECT: ${{ vars.PROJECT_NAME || 'tareas-devops' }}
+
+jobs:
+  desplegar:
+    name: Desplegar en ECS
+    # Solo si el build terminó bien (o si es ejecución manual)
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Obtener código (mismo commit que se construyó)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Determinar tag
+        id: tag
+        run: |
+          SHA="${{ github.event.workflow_run.head_sha || github.sha }}"
+          TAG="${{ inputs.image_tag }}"
+          [ -z "$TAG" ] && TAG="${SHA::7}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Desplegando tag: $TAG"
+
+      - name: Verificar configuración de GitHub
+        run: |
+          if [ -z "${{ vars.AWS_ROLE_ARN }}" ]; then
+            echo "::error::Falta la variable AWS_ROLE_ARN (ejecuta terraform/bootstrap/preparar-cuenta.sh, ver README paso 2)."
+            exit 1
+          fi
+
+      - name: Credenciales AWS temporales (OIDC, sin claves guardadas)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          role-session-name: gha-${{ github.run_id }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Verificar imágenes en ECR
+        run: |
+          for c in backend frontend; do
+            aws ecr describe-images --repository-name "${PROJECT}/$c" \
+              --image-ids imageTag="${{ steps.tag.outputs.tag }}" \
+              --query 'imageDetails[0].{repo:repositoryName,tags:imageTags,pushedAt:imagePushedAt}' \
+              --output table
+          done
+
+      # Backend primero: así cuando el nuevo frontend arranque, la API ya está lista
+      - name: Desplegar backend
+        id: backend
+        run: bash pipelines/scripts/deploy-ecs.sh backend "${{ steps.tag.outputs.tag }}"
+
+      - name: Desplegar frontend
+        id: frontend
+        run: bash pipelines/scripts/deploy-ecs.sh frontend "${{ steps.tag.outputs.tag }}"
+
+      - name: Obtener URL del ALB
+        id: alb
+        run: |
+          DNS="$(aws elbv2 describe-load-balancers --names "${PROJECT}-alb" \
+            --query 'LoadBalancers[0].DNSName' --output text)"
+          echo "url=http://$DNS" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test (aplicación operativa)
+        run: bash pipelines/scripts/smoke-test.sh "${{ steps.alb.outputs.url }}" "${{ steps.tag.outputs.tag }}"
+
+      - name: Rollback si falló el smoke test
+        if: failure() && steps.frontend.outcome == 'success'
+        run: |
+          echo "::warning::Smoke test fallido: revirtiendo a las versiones anteriores"
+          CLUSTER="${PROJECT}-cluster"
+          aws ecs update-service --cluster "$CLUSTER" --service "${PROJECT}-backend" \
+            --task-definition "${{ steps.backend.outputs.previous_backend }}" >/dev/null
+          aws ecs update-service --cluster "$CLUSTER" --service "${PROJECT}-frontend" \
+            --task-definition "${{ steps.frontend.outputs.previous_frontend }}" >/dev/null
+          aws ecs wait services-stable --cluster "$CLUSTER" \
+            --services "${PROJECT}-backend" "${PROJECT}-frontend"
+          echo "Rollback completado."
+
+      - name: Resumen
+        if: success()
+        run: |
+          {
+            echo "## Despliegue completado"
+            echo "- Versión: \`${{ steps.tag.outputs.tag }}\`"
+            echo "- URL: ${{ steps.alb.outputs.url }}"
+          } >> "$GITHUB_STEP_SUMMARY"

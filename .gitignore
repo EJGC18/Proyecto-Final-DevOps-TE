@@ -1,0 +1,25 @@
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+crash.log
+terraform.tfvars
+backend.hcl
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Secretos / credenciales: NUNCA al repositorio
+.env
+.env.*
+*.pem
+*.key
+credentials
+.aws/
+
+# Sistema
+.DS_Store
+Thumbs.db
