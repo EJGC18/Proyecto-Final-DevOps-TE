@@ -7,7 +7,10 @@ Aplicación web **Tareas DevOps** (frontend nginx + backend Node/Express con API
 2. **Build y publicación** — pruebas, construcción de imágenes Docker, tag por commit y push a ECR.
 3. **Despliegue** — nueva task definition, actualización de servicios ECS, smoke test y rollback.
 
-**Demo:** _(pega aquí el enlace al video o capturas de la demo)_
+**Demo:** http://tareas-devops-alb-323956037.us-east-1.elb.amazonaws.com
+
+> La URL corresponde al ALB actual. Si la infraestructura se destruye y se vuelve a crear, la URL cambia:
+> la nueva aparece en el *Summary* del Pipeline 1 (`app_url`) y en el último paso del Pipeline 3.
 
 ---
 
